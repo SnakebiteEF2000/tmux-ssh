@@ -16,17 +16,58 @@ sshconfigs(){
 
 # loop through all sshconfigs() and present everything in fzf-tmux
 # start nested tmux session on remote system or fallback to regular ssh if tmux is not installed remotely
-ssh-tmux(){
-  local selected_host=$(awk '/^Host / {
-    host = $2
-    desc = ""
-    for (i=3; i<=NF; i++) desc = desc " " $i
-    if (host !~ "*") print host "\t" desc
-    }' $(sshconfigs) | fzf-tmux -p --reverse -1 -0 +m +s --query "$LBUFFER" --prompt="SSH Host > " | cut -f1)
+ssh-tmux() {
+  local selected_host=$(
+    # Format the hosts and descriptions properly
+    awk '/^Host / {
+      host = $2
+      desc = ""
+      app_tag = ""
+      env_tag = ""
+      role_tag = ""
+
+      for (i=3; i<=NF; i++) {
+        # Capture tags into respective variables
+        if ($i ~ /^app_/) {
+          app_tag = $i
+        } else if ($i ~ /^env_/) {
+          env_tag = $i
+        } else if ($i ~ /^role_/) {
+          role_tag = $i
+        } else {
+          desc = desc " " $i;  # Non-tag parts of the description
+        }
+      }
+
+      # Remove tags from the description
+      gsub(/ *app_[^ ]*/, "", desc)
+      gsub(/ *env_[^ ]*/, "", desc)
+      gsub(/ *role_[^ ]*/, "", desc)
+
+      # Normalize spaces
+      gsub(/[^a-zA-Z0-9_]+/, " ", desc)  # Replace non-recognized characters with a space
+      gsub(/[ ]+/, " ", desc)            # Replace multiple spaces with a single space
+      desc = gensub(/^ +| +$/, "", "", desc);  # Trim leading/trailing spaces
+      
+      if (host !~ "*") { 
+        printf "%s\t%s\t%s\t%s\t%s\n", host, desc, app_tag, env_tag, role_tag
+      }
+    }' $(sshconfigs) | 
+    fzf-tmux -p --reverse -1 -0 +m +s --query "$LBUFFER" --prompt="SSH Host > " \
+    --preview "echo \"Server Name: \$(echo {} | cut -f1)\"; \
+                echo 'Tags:'; \
+                echo \"  \$(echo {} | cut -f3)\"; \
+                echo \"  \$(echo {} | cut -f4)\"; \
+                echo \"  \$(echo {} | cut -f5)\"; \
+                echo \"\nDescription: \$(echo {} | cut -f2- | sed 's/^ *//')\"" \
+    --preview-window=up:10:wrap \
+    | cut -f1
+  )
 
   if [ -n "$selected_host" ]; then
-    tmux new-window -n ssh-${selected_host} /usr/bin/ssh -o ConnectTimeout=10 -t "${selected_host}" "tmux new -A 'cat /etc/motd; /bin/bash'" || /usr/bin/ssh -o ConnectTimeout=10 -t "${selected_host}"
+    tmux new-window -n "ssh-${selected_host}" /usr/bin/ssh -o ConnectTimeout=10 -t "${selected_host}" "tmux new -A 'cat /etc/motd; /bin/bash'" || /usr/bin/ssh -o ConnectTimeout=10 -t "${selected_host}"
   fi
 }
+
 
 ssh-tmux
